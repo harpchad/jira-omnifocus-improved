@@ -11,39 +11,65 @@
 (() => {
   const action = new PlugIn.Action(function (selection, sender) {
     // START EDIT
+    // Configuration for each Jira instance
+    // Credentials are now stored securely in macOS Keychain
+    // On first run, you'll be prompted to enter credentials for each jiraUrl
     const configs = [{
-        user: "", // use email address for jira cloud
-        password: "", // you can use api tokens, see https://id.atlassian.com/manage-profile/security/api-tokens
-        jiraUrl: "",
+        jiraUrl: "", // e.g., "https://yourcompany.atlassian.net"
+        credentialKey: "jira-default", // Unique key for this Jira instance's credentials in Keychain
         omnifocusTagToUse: "Jira", // you can also use the format "Parent1 : Parent2 : Child"
         jiraQuery: "assignee=currentuser() and resolution is empty",
         processComments: false, // if true, a subtask is added for each ticket comment
         omnifocusCommentTagToUse: "Jira-Comment",
-//    },
-//    {
-//        user: "",
-//        password: "",
-//        jiraUrl: "",
-//        omnifocusTagToUse: "",
-//        jiraQuery: "assignee=currentuser() and resolution is empty",
-//        processComments: false,
-//        omnifocusCommentTagToUse: "",
-//
     }]
+    // Example for multiple Jira instances:
+    // {
+    //     jiraUrl: "https://secondcompany.atlassian.net",
+    //     credentialKey: "jira-secondary",
+    //     omnifocusTagToUse: "Jira-Secondary",
+    //     jiraQuery: "assignee=currentuser() and resolution is empty",
+    //     processComments: false,
+    //     omnifocusCommentTagToUse: "Jira-Comment-Secondary",
+    // }
     // END EDIT
 
     configs.forEach((config) => {
-        const user = config.user;
-        const password = config.password;
         const jiraUrl = config.jiraUrl;
+        const credentialKey = config.credentialKey;
         const omnifocusTagToUse = config.omnifocusTagToUse;
         const jiraQuery = config.jiraQuery;
         const processComments = config.processComments;
         const omnifocusCommentTagToUse = config.omnifocusCommentTagToUse;
 
+        // Retrieve credentials from Keychain
+        // If not found, prompt user to enter them
+        const credential = Credential.read(credentialKey);
+        if (!credential) {
+          // Prompt for credentials on first run
+          const form = new Form();
+          form.addField(new Form.Field.String("user", "Jira Username/Email", null));
+          form.addField(new Form.Field.Password("password", "Jira API Token", null));
+          const formPromise = form.show(`Enter credentials for ${jiraUrl}`, "Save");
+          
+          formPromise.then((formObject) => {
+            const user = formObject.values.user;
+            const password = formObject.values.password;
+            
+            // Save to Keychain
+            Credential.write(credentialKey, user, password);
+            
+            console.log(`INFO: Credentials saved to Keychain for ${credentialKey}. Please run sync again.`);
+          }).catch((err) => {
+            console.error(`ERROR: Failed to save credentials for ${credentialKey}: ${err}`);
+          });
+          return; // Exit this config iteration, credentials will be available on next run
+        }
+
+        const user = credential.user;
+        const password = credential.password;
+
         const urlParams = "/rest/api/2/search?jql=" + encodeURIComponent(jiraQuery);
         const url = jiraUrl + urlParams;
-
 
         const data = Data.fromString(user + ":" + password);
         const credentials = data.toBase64();
