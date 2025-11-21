@@ -9,6 +9,9 @@
   "shortLabel": "Jira: sync"
 }*/
 (() => {
+  // Create Credentials instance (must be done during plugin loading)
+  var credentials = new Credentials();
+  
   // ============================================================================
   // CONSTANTS
   // ============================================================================
@@ -33,9 +36,6 @@
   const CONTENT_TYPE_JSON = "application/json";
   
   // ============================================================================
-  
-  // Create Credentials instance (must be done during plugin loading)
-  let credentials = new Credentials();
   
   var action = new PlugIn.Action(function (selection, sender) {
     // START EDIT
