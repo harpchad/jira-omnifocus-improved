@@ -34,6 +34,9 @@
   
   // ============================================================================
   
+  // Create Credentials instance (must be done during plugin loading)
+  const credentials = new Credentials();
+  
   const action = new PlugIn.Action(function (selection, sender) {
     // START EDIT
     // Configuration for each Jira instance
@@ -118,7 +121,7 @@
 
         // Retrieve credentials from Keychain
         // If not found, prompt user to enter them
-        const credential = Credential.read(credentialKey);
+        const credential = credentials.read(credentialKey);
         if (!credential) {
           // Prompt for credentials on first run
           const form = new Form();
@@ -146,7 +149,7 @@
             }
             
             // Save to Keychain
-            Credential.write(credentialKey, user, password);
+            credentials.write(credentialKey, user, password);
             
             const alert = new Alert("Credentials Saved", 
               `Credentials saved to Keychain for ${credentialKey}.\n\nPlease run sync again.`
