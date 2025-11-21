@@ -71,7 +71,7 @@
 
     configs.forEach((config, index) => {
         // Validate required configuration fields
-        const errors = [];
+        var errors = [];
         
         if (!config.jiraUrl || config.jiraUrl.trim() === "") {
           errors.push("jiraUrl is required");
@@ -112,16 +112,16 @@
           return; // Skip this invalid config
         }
         
-        const jiraUrl = config.jiraUrl.trim();
-        const credentialKey = config.credentialKey.trim();
-        const omnifocusTagToUse = config.omnifocusTagToUse.trim();
-        const jiraQuery = config.jiraQuery.trim();
-        const processComments = config.processComments;
-        const omnifocusCommentTagToUse = config.omnifocusCommentTagToUse?.trim() || "";
+        var jiraUrl = config.jiraUrl.trim();
+        var credentialKey = config.credentialKey.trim();
+        var omnifocusTagToUse = config.omnifocusTagToUse.trim();
+        var jiraQuery = config.jiraQuery.trim();
+        var processComments = config.processComments;
+        var omnifocusCommentTagToUse = config.omnifocusCommentTagToUse?.trim() || "";
 
         // Retrieve credentials from Keychain
         // If not found, prompt user to enter them
-        const credential = credentials.read(credentialKey);
+        var credential = credentials.read(credentialKey);
         if (!credential) {
           // Prompt for credentials on first run
           const form = new Form();
@@ -130,8 +130,8 @@
           const formPromise = form.show(`Enter credentials for ${jiraUrl}`, "Save");
           
           formPromise.then((formObject) => {
-            const user = formObject.values.user;
-            const password = formObject.values.password;
+            var user = formObject.values.user;
+            var password = formObject.values.password;
             
             // Validate credentials before saving
             if (!user || user.trim() === "") {
@@ -162,8 +162,8 @@
           return; // Exit this config iteration, credentials will be available on next run
         }
 
-        const user = credential.user;
-        const password = credential.password;
+        var user = credential.user;
+        var password = credential.password;
 
         const urlParams = `${JIRA_API_SEARCH_PATH}?jql=${encodeURIComponent(jiraQuery)}`;
         const url = jiraUrl + urlParams;
