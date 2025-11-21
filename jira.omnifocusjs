@@ -142,6 +142,14 @@
 
         const data = Data.fromString(user + ":" + password);
         const credentials = data.toBase64();
+        
+        // Improved regex for Jira ticket IDs
+        // Format: PROJECT-123 where PROJECT is 1-10 uppercase letters (can include numbers)
+        // and 123 is 1-6 digits
+        const JIRA_TICKET_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6}/;
+        
+        // Regex for comment IDs (ticket ID followed by space and comment number)
+        const JIRA_COMMENT_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6} [0-9]+/;
 
         const request = URL.FetchRequest.fromString(url);
         request.method = "GET";
@@ -194,19 +202,23 @@
         const omnifocusComments = {};
         if (processComments) {
           // Get all comment tagged tasks
-          var commentTag =
+          const commentTag =
             tags.byName(omnifocusCommentTagToUse) ||
             flattenedTags.byName(omnifocusCommentTagToUse) ||
             new Tag(omnifocusCommentTagToUse);
 
             const commentTasks = commentTag.tasks;
             commentTasks.forEach((comment) => {
-              const re = new RegExp(`^[A-Za-z0-9-]+ [0-9]+`);
               let commentId;
               try {
-                commentId = comment.name.match(re);
-                if (!commentId) return;
-              } catch {
+                const match = comment.name.match(JIRA_COMMENT_REGEX);
+                if (!match) {
+                  console.log(`DEBUG: Comment task does not match Jira format: ${comment.name}`);
+                  return;
+                }
+                commentId = match[0];
+              } catch (error) {
+                console.error(`ERROR: Failed to parse comment name: ${comment.name} - ${error.message}`);
                 return;
               }
               omnifocusComments[commentId] = comment;
@@ -216,12 +228,16 @@
         // cache object instead of array so search will be faster later
         let omnifocusTasks = {};
         tasks.forEach((task) => {
-          const re = new RegExp(`^[A-Za-z0-9-]+`);
           let taskId;
           try {
-            taskId = task.name.match(re)[0];
-            if (!taskId) return;
-          } catch {
+            const match = task.name.match(JIRA_TICKET_REGEX);
+            if (!match) {
+              console.log(`DEBUG: Task does not match Jira ticket format, skipping: ${task.name}`);
+              return;
+            }
+            taskId = match[0];
+          } catch (error) {
+            console.error(`ERROR: Failed to parse task name: ${task.name} - ${error.message}`);
             return;
           }
           omnifocusTasks[taskId] = task;
