@@ -33,13 +33,63 @@
     // }
     // END EDIT
 
-    configs.forEach((config) => {
-        const jiraUrl = config.jiraUrl;
-        const credentialKey = config.credentialKey;
-        const omnifocusTagToUse = config.omnifocusTagToUse;
-        const jiraQuery = config.jiraQuery;
+    // Validate configurations before processing
+    if (!configs || configs.length === 0) {
+      const alert = new Alert("Configuration Error", "No Jira configurations defined. Please edit the plugin and add at least one config.");
+      alert.show();
+      console.error("ERROR: No configurations defined in configs array");
+      return;
+    }
+
+    configs.forEach((config, index) => {
+        // Validate required configuration fields
+        const errors = [];
+        
+        if (!config.jiraUrl || config.jiraUrl.trim() === "") {
+          errors.push("jiraUrl is required");
+        } else {
+          // Validate URL format
+          try {
+            const urlObj = new URL(config.jiraUrl);
+            if (!urlObj.protocol.startsWith('http')) {
+              errors.push("jiraUrl must start with http:// or https://");
+            }
+          } catch (urlError) {
+            errors.push(`jiraUrl is invalid: ${urlError.message}`);
+          }
+        }
+        
+        if (!config.credentialKey || config.credentialKey.trim() === "") {
+          errors.push("credentialKey is required");
+        }
+        
+        if (!config.omnifocusTagToUse || config.omnifocusTagToUse.trim() === "") {
+          errors.push("omnifocusTagToUse is required");
+        }
+        
+        if (!config.jiraQuery || config.jiraQuery.trim() === "") {
+          errors.push("jiraQuery is required");
+        }
+        
+        if (config.processComments && (!config.omnifocusCommentTagToUse || config.omnifocusCommentTagToUse.trim() === "")) {
+          errors.push("omnifocusCommentTagToUse is required when processComments is true");
+        }
+        
+        // Report validation errors
+        if (errors.length > 0) {
+          const errorMsg = `Configuration #${index + 1} is invalid:\n- ${errors.join('\n- ')}`;
+          const alert = new Alert("Configuration Error", errorMsg);
+          alert.show();
+          console.error(`ERROR: ${errorMsg}`);
+          return; // Skip this invalid config
+        }
+        
+        const jiraUrl = config.jiraUrl.trim();
+        const credentialKey = config.credentialKey.trim();
+        const omnifocusTagToUse = config.omnifocusTagToUse.trim();
+        const jiraQuery = config.jiraQuery.trim();
         const processComments = config.processComments;
-        const omnifocusCommentTagToUse = config.omnifocusCommentTagToUse;
+        const omnifocusCommentTagToUse = config.omnifocusCommentTagToUse?.trim() || "";
 
         // Retrieve credentials from Keychain
         // If not found, prompt user to enter them
@@ -55,9 +105,28 @@
             const user = formObject.values.user;
             const password = formObject.values.password;
             
+            // Validate credentials before saving
+            if (!user || user.trim() === "") {
+              const alert = new Alert("Validation Error", "Username/email cannot be empty");
+              alert.show();
+              console.error("ERROR: Empty username provided");
+              return;
+            }
+            
+            if (!password || password.trim() === "") {
+              const alert = new Alert("Validation Error", "API token/password cannot be empty");
+              alert.show();
+              console.error("ERROR: Empty password provided");
+              return;
+            }
+            
             // Save to Keychain
             Credential.write(credentialKey, user, password);
             
+            const alert = new Alert("Credentials Saved", 
+              `Credentials saved to Keychain for ${credentialKey}.\n\nPlease run sync again.`
+            );
+            alert.show();
             console.log(`INFO: Credentials saved to Keychain for ${credentialKey}. Please run sync again.`);
           }).catch((err) => {
             console.error(`ERROR: Failed to save credentials for ${credentialKey}: ${err}`);
