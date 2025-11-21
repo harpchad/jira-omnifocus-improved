@@ -9,6 +9,31 @@
   "shortLabel": "Jira: sync"
 }*/
 (() => {
+  // ============================================================================
+  // CONSTANTS
+  // ============================================================================
+  
+  // Jira API endpoints
+  const JIRA_API_SEARCH_PATH = "/rest/api/2/search";
+  const JIRA_API_COMMENT_PATH = "/rest/api/2/issue";
+  const JIRA_BROWSE_PATH = "/browse/";
+  
+  // HTTP Status codes
+  const HTTP_OK = 200;
+  const HTTP_UNAUTHORIZED = 401;
+  const HTTP_FORBIDDEN = 403;
+  const HTTP_NOT_FOUND = 404;
+  const HTTP_ERROR_THRESHOLD = 400;
+  
+  // Default values
+  const DEFAULT_NO_DESCRIPTION = "No description";
+  const DEFAULT_NO_TITLE = "No title";
+  
+  // Content types
+  const CONTENT_TYPE_JSON = "application/json";
+  
+  // ============================================================================
+  
   const action = new PlugIn.Action(function (selection, sender) {
     // START EDIT
     // Configuration for each Jira instance
@@ -137,7 +162,7 @@
         const user = credential.user;
         const password = credential.password;
 
-        const urlParams = "/rest/api/2/search?jql=" + encodeURIComponent(jiraQuery);
+        const urlParams = `${JIRA_API_SEARCH_PATH}?jql=${encodeURIComponent(jiraQuery)}`;
         const url = jiraUrl + urlParams;
 
         const data = Data.fromString(user + ":" + password);
@@ -255,20 +280,20 @@
             throw new Error("No response received from Jira API");
           }
           
-          if (response.statusCode >= 400) {
+          if (response.statusCode >= HTTP_ERROR_THRESHOLD) {
             let errorMsg = `Jira API error (${response.statusCode})`;
-            if (response.statusCode === 401) {
+            if (response.statusCode === HTTP_UNAUTHORIZED) {
               errorMsg += ": Authentication failed. Check credentials in Keychain.";
-            } else if (response.statusCode === 403) {
+            } else if (response.statusCode === HTTP_FORBIDDEN) {
               errorMsg += ": Access forbidden. Verify API token permissions.";
-            } else if (response.statusCode === 404) {
+            } else if (response.statusCode === HTTP_NOT_FOUND) {
               errorMsg += ": Jira instance not found. Check jiraUrl in config.";
             }
             throw new Error(errorMsg);
           }
           
-          if (response.mimeType !== "application/json") {
-            throw new Error(`Unexpected response type: ${response.mimeType}. Expected application/json`);
+          if (response.mimeType !== CONTENT_TYPE_JSON) {
+            throw new Error(`Unexpected response type: ${response.mimeType}. Expected ${CONTENT_TYPE_JSON}`);
           }
           
           let jsonResponse;
@@ -302,14 +327,13 @@
                 }
 
                 // There was no Matching Task, so we create the Task
-                const taskName = issue.key + " " + (issue.fields.summary || "No title");
+                const taskName = `${issue.key} ${issue.fields.summary || DEFAULT_NO_TITLE}`;
                 const newTask = new Task(taskName, inbox.beginning);
-                const taskUrl = jiraUrl + "/browse/" + issue.key;
+                const taskUrl = `${jiraUrl}${JIRA_BROWSE_PATH}${issue.key}`;
                 createdTasks++;
 
                 newTask.addTag(tag);
-                newTask.note =
-                  taskUrl + "\n" + (issue.fields.description || "No description");
+                newTask.note = `${taskUrl}\n${issue.fields.description || DEFAULT_NO_DESCRIPTION}`;
               } catch (issueError) {
                 console.error(`ERROR: Failed to process issue ${issue?.key || 'unknown'}: ${issueError.message}`);
               }
@@ -338,7 +362,7 @@
                 
                 // Batch comment fetching - collect promises instead of executing sequentially
                 if (processComments) {
-                    const commentUrlParams = "/rest/api/2/issue/"+task_id +"/comment"
+                    const commentUrlParams = `${JIRA_API_COMMENT_PATH}/${task_id}/comment`;
                     const commentUrl = jiraUrl + commentUrlParams;
                     const commentRequest = URL.FetchRequest.fromString(commentUrl);
                     commentRequest.method = "GET";
@@ -347,7 +371,7 @@
                     const commentPromise = commentRequest.fetch()
                       .then((commentResponse) => {
                         try {
-                          if (commentResponse.statusCode >= 400) {
+                          if (commentResponse.statusCode >= HTTP_ERROR_THRESHOLD) {
                             console.error(`WARNING: Failed to fetch comments for ${task_id} (${commentResponse.statusCode})`);
                             return 0;
                           }
