@@ -232,9 +232,12 @@
 
 
             //Close Tasks or Update comments if enabled
+            // Collect all comment fetch promises for batch processing
+            const commentPromises = [];
+            
             for (const [task_id, task] of Object.entries(omnifocusTasks)) {
               if (!task.jiraToOmnifocusMatched) {
-                  var can_delete = true;
+                  let can_delete = true;
 
                   if(task.hasChildren){
                       task.children.forEach(subtask => {
@@ -247,44 +250,61 @@
                     task.markComplete();
                   }
                 }
-                // Better check anyway, may the ticket is just reasigned
+                
+                // Batch comment fetching - collect promises instead of executing sequentially
                 if (processComments) {
                     const commentUrlParams = "/rest/api/2/issue/"+task_id +"/comment"
                     const commentUrl = jiraUrl + commentUrlParams;
                     const commentRequest = URL.FetchRequest.fromString(commentUrl);
                     commentRequest.method = "GET";
                     commentRequest.headers = { Authorization: `Basic ${credentials}` };
-                    var requestPromiseComment = commentRequest.fetch();
-                    requestPromiseComment.then((commentResponse) => {
+                    
+                    const commentPromise = commentRequest.fetch()
+                      .then((commentResponse) => {
                         try {
                           if (commentResponse.statusCode >= 400) {
                             console.error(`WARNING: Failed to fetch comments for ${task_id} (${commentResponse.statusCode})`);
-                            return;
+                            return 0;
                           }
                           
                           const jsonComments = JSON.parse(commentResponse.bodyString);
                           if (!jsonComments.comments) {
                             console.error(`WARNING: Invalid comment response for ${task_id}`);
-                            return;
+                            return 0;
                           }
                           
+                          let newCommentsCount = 0;
                           for (const comment of jsonComments.comments) {
                               const comment_id = task_id + " " + comment.id;
                               if (!omnifocusComments[comment_id] ) {
                                   const taskName = comment_id + " Comment:\n" + comment.body;
                                   const newTask = new Task(taskName, task);
                                   newTask.addTag(commentTag);
-                                  createdComments++;
+                                  newCommentsCount++;
                               }
                           }
+                          return newCommentsCount;
                         } catch (commentError) {
                           console.error(`ERROR: Failed to process comments for ${task_id}: ${commentError.message}`);
+                          return 0;
                         }
-                    }).catch((commentErr) => {
-                      console.error(`ERROR: Comment fetch failed for ${task_id}: ${commentErr.message}`);
-                    });
+                      })
+                      .catch((commentErr) => {
+                        console.error(`ERROR: Comment fetch failed for ${task_id}: ${commentErr.message}`);
+                        return 0;
+                      });
+                    
+                    commentPromises.push(commentPromise);
                 }
-            };
+            }
+            
+            // Wait for all comment fetches to complete in parallel
+            if (commentPromises.length > 0) {
+              Promise.all(commentPromises).then((commentCounts) => {
+                createdComments = commentCounts.reduce((sum, count) => sum + count, 0);
+                console.log(`INFO: Completed batch comment fetch for ${commentPromises.length} tickets, created ${createdComments} comment subtasks`);
+              });
+            }
           
           // Show success notification
           const alert = new Alert("Jira Sync Complete", 
