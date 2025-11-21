@@ -164,29 +164,70 @@
           let createdTasks = 0;
           let checkedTickets = 0;
           let createdComments = 0;
-          if (response.mimeType == "application/json") {
-            const jsonResponse = JSON.parse(response.bodyString);
-            // ADD THE TASKS
+          
+          // Validate response
+          if (!response) {
+            throw new Error("No response received from Jira API");
+          }
+          
+          if (response.statusCode >= 400) {
+            let errorMsg = `Jira API error (${response.statusCode})`;
+            if (response.statusCode === 401) {
+              errorMsg += ": Authentication failed. Check credentials in Keychain.";
+            } else if (response.statusCode === 403) {
+              errorMsg += ": Access forbidden. Verify API token permissions.";
+            } else if (response.statusCode === 404) {
+              errorMsg += ": Jira instance not found. Check jiraUrl in config.";
+            }
+            throw new Error(errorMsg);
+          }
+          
+          if (response.mimeType !== "application/json") {
+            throw new Error(`Unexpected response type: ${response.mimeType}. Expected application/json`);
+          }
+          
+          let jsonResponse;
+          try {
+            jsonResponse = JSON.parse(response.bodyString);
+          } catch (parseError) {
+            throw new Error(`Failed to parse Jira response: ${parseError.message}`);
+          }
+          
+          if (!jsonResponse.issues) {
+            throw new Error("Invalid Jira response: missing 'issues' field");
+          }
+          
+          // ADD THE TASKS
 
             for (const issue of jsonResponse.issues) {
-              // Search if we need to add a new Task
-              checkedTickets++;
-              if (omnifocusTasks[issue.key]) {
-                // Make sure the task opens again
-                omnifocusTasks[issue.key].markIncomplete();
-                omnifocusTasks[issue.key].jiraToOmnifocusMatched = true;
-                continue;
+              try {
+                // Validate issue data
+                if (!issue.key || !issue.fields) {
+                  console.error(`WARNING: Skipping invalid issue: ${JSON.stringify(issue)}`);
+                  continue;
+                }
+                
+                // Search if we need to add a new Task
+                checkedTickets++;
+                if (omnifocusTasks[issue.key]) {
+                  // Make sure the task opens again
+                  omnifocusTasks[issue.key].markIncomplete();
+                  omnifocusTasks[issue.key].jiraToOmnifocusMatched = true;
+                  continue;
+                }
+
+                // There was no Matching Task, so we create the Task
+                const taskName = issue.key + " " + (issue.fields.summary || "No title");
+                const newTask = new Task(taskName, inbox.beginning);
+                const taskUrl = jiraUrl + "/browse/" + issue.key;
+                createdTasks++;
+
+                newTask.addTag(tag);
+                newTask.note =
+                  taskUrl + "\n" + (issue.fields.description || "No description");
+              } catch (issueError) {
+                console.error(`ERROR: Failed to process issue ${issue?.key || 'unknown'}: ${issueError.message}`);
               }
-
-              // There was no Matching Task, so we create the Task
-              const taskName = issue.key + " " + issue.fields.summary;
-              const newTask = new Task(taskName, inbox.beginning);
-              const taskUrl = jiraUrl + "/browse/" + issue.key;
-              createdTasks++;
-
-              newTask.addTag(tag);
-              newTask.note =
-                taskUrl + "\n" + (issue.fields.description || "No description");
             }
 
 
@@ -215,25 +256,59 @@
                     commentRequest.headers = { Authorization: `Basic ${credentials}` };
                     var requestPromiseComment = commentRequest.fetch();
                     requestPromiseComment.then((commentResponse) => {
-                        const jsonComments = JSON.parse(commentResponse.bodyString);
-                        for (const comment of jsonComments.comments) {
-                            const comment_id = task_id + " " + comment.id;
-                            if (!omnifocusComments[comment_id] ) {
-                                const taskName = comment_id + " Comment:\n" + comment.body;
-                                const newTask = new Task(taskName, task);
-                                newTask.addTag(commentTag);
-                                createdComments++;
-                            }
+                        try {
+                          if (commentResponse.statusCode >= 400) {
+                            console.error(`WARNING: Failed to fetch comments for ${task_id} (${commentResponse.statusCode})`);
+                            return;
+                          }
+                          
+                          const jsonComments = JSON.parse(commentResponse.bodyString);
+                          if (!jsonComments.comments) {
+                            console.error(`WARNING: Invalid comment response for ${task_id}`);
+                            return;
+                          }
+                          
+                          for (const comment of jsonComments.comments) {
+                              const comment_id = task_id + " " + comment.id;
+                              if (!omnifocusComments[comment_id] ) {
+                                  const taskName = comment_id + " Comment:\n" + comment.body;
+                                  const newTask = new Task(taskName, task);
+                                  newTask.addTag(commentTag);
+                                  createdComments++;
+                              }
+                          }
+                        } catch (commentError) {
+                          console.error(`ERROR: Failed to process comments for ${task_id}: ${commentError.message}`);
                         }
+                    }).catch((commentErr) => {
+                      console.error(`ERROR: Comment fetch failed for ${task_id}: ${commentErr.message}`);
                     });
                 }
             };
-          }
-          console.log(`NOTICE: Synced ${jiraUrl}. Checked ${checkedTickets} Tickets, Created ${createdTasks} new tasks, Added ${createdComments} Subtickets for Comments`);
+          
+          // Show success notification
+          const alert = new Alert("Jira Sync Complete", 
+            `Synced ${jiraUrl}\n` +
+            `✓ Checked ${checkedTickets} tickets\n` +
+            `✓ Created ${createdTasks} new tasks\n` +
+            `✓ Added ${createdComments} comment subtasks`
+          );
+          alert.show();
+          
+          console.log(`SUCCESS: Synced ${jiraUrl}. Checked ${checkedTickets} Tickets, Created ${createdTasks} new tasks, Added ${createdComments} Subtickets for Comments`);
         });
 
         requestPromise.catch((err) => {
-          console.log(`DEBUG: catch error ${err}`);
+          // Show error notification to user
+          const errorAlert = new Alert("Jira Sync Failed", 
+            `Failed to sync ${jiraUrl}\n\n` +
+            `Error: ${err.message}\n\n` +
+            `Check Console.app for details.`
+          );
+          errorAlert.show();
+          
+          console.error(`ERROR: Jira sync failed for ${jiraUrl}: ${err.message}`);
+          console.error(`Stack: ${err.stack || 'No stack trace available'}`);
         });
     });
 
