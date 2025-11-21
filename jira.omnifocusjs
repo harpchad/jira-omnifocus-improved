@@ -35,9 +35,9 @@
   // ============================================================================
   
   // Create Credentials instance (must be done during plugin loading)
-  const credentials = new Credentials();
+  let credentials = new Credentials();
   
-  const action = new PlugIn.Action(function (selection, sender) {
+  var action = new PlugIn.Action(function (selection, sender) {
     // START EDIT
     // Configuration for each Jira instance
     // Credentials are now stored securely in macOS Keychain
