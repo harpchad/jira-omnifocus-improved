@@ -3,80 +3,78 @@
   "targets": ["omnifocus"],
   "author": "Chad Harp (improved fork of Bastian Kuhn's original)",
   "identifier": "com.harpchad.omnifocus.sync.jira-improved",
-  "version": "2.3",
+  "version": "2.4",
   "description": "Improved Jira-OmniFocus sync with secure credentials, error handling, and performance enhancements",
   "label": "🔹 Jira: Sync",
   "shortLabel": "Jira: sync"
 }*/
 (() => {
-  var credentials = new Credentials();
+  const credentials = new Credentials();
   
   // Helper function to extract plain text from Atlassian Document Format (ADF)
-  function extractTextFromADF(doc) {
+  const extractTextFromADF = (doc) => {
     if (!doc || !doc.content) {
       return "No description";
     }
     
-    var textParts = [];
+    const textParts = [];
     
-    function processNode(node) {
+    const processNode = (node) => {
       if (node.type === 'text') {
         textParts.push(node.text);
       } else if (node.content) {
-        for (var i = 0; i < node.content.length; i++) {
-          processNode(node.content[i]);
-        }
+        node.content.forEach(processNode);
       }
-    }
+    };
     
-    for (var i = 0; i < doc.content.length; i++) {
-      processNode(doc.content[i]);
+    doc.content.forEach((node, i) => {
+      processNode(node);
       // Add paragraph breaks
-      if (i < doc.content.length - 1 && doc.content[i].type === 'paragraph') {
+      if (i < doc.content.length - 1 && node.type === 'paragraph') {
         textParts.push('\n');
       }
-    }
+    });
     
     return textParts.join('') || "No description";
-  }
+  };
   
-  var action = new PlugIn.Action(function(selection, sender) {
+  const action = new PlugIn.Action((selection, sender) => {
     // Configuration
-    var jiraUrl = "https://ncmassociates.atlassian.net";
-    var credentialKey = "jira-ncm";
-    var omnifocusTagToUse = "jira";
-    var jiraQuery = "assignee=currentuser() and resolution is empty";
-    var processComments = false;
-    var omnifocusCommentTagToUse = "Jira-Comment";
-    var syncDueDates = false; // Set to true to sync Jira due dates to OmniFocus
+    const jiraUrl = "https://ncmassociates.atlassian.net";
+    const credentialKey = "jira-ncm";
+    const omnifocusTagToUse = "jira";
+    const jiraQuery = "assignee=currentuser() and resolution is empty";
+    const processComments = false;
+    const omnifocusCommentTagToUse = "Jira-Comment";
+    const syncDueDates = true; // Set to true to sync Jira due dates to OmniFocus
     
     // Constants
-    var JIRA_API_SEARCH_PATH = "/rest/api/3/search/jql";
-    var JIRA_API_COMMENT_PATH = "/rest/api/3/issue";
-    var JIRA_BROWSE_PATH = "/browse/";
-    var HTTP_ERROR_THRESHOLD = 400;
-    var HTTP_UNAUTHORIZED = 401;
-    var HTTP_FORBIDDEN = 403;
-    var HTTP_NOT_FOUND = 404;
-    var CONTENT_TYPE_JSON = "application/json";
-    var DEFAULT_NO_DESCRIPTION = "No description";
-    var DEFAULT_NO_TITLE = "No title";
-    var JIRA_TICKET_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6}/;
-    var JIRA_COMMENT_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6} [0-9]+/;
+    const JIRA_API_SEARCH_PATH = "/rest/api/3/search/jql";
+    const JIRA_API_COMMENT_PATH = "/rest/api/3/issue";
+    const JIRA_BROWSE_PATH = "/browse/";
+    const HTTP_ERROR_THRESHOLD = 400;
+    const HTTP_UNAUTHORIZED = 401;
+    const HTTP_FORBIDDEN = 403;
+    const HTTP_NOT_FOUND = 404;
+    const CONTENT_TYPE_JSON = "application/json";
+    const DEFAULT_NO_DESCRIPTION = "No description";
+    const DEFAULT_NO_TITLE = "No title";
+    const JIRA_TICKET_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6}/;
+    const JIRA_COMMENT_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6} [0-9]+/;
     
     try {
       // Retrieve credentials
-      var credential = credentials.read(credentialKey);
+      const credential = credentials.read(credentialKey);
       
       if (!credential) {
         // Prompt for credentials
-        var form = new Form();
+        const form = new Form();
         form.addField(new Form.Field.String("user", "Jira Username/Email", null));
         form.addField(new Form.Field.Password("password", "Jira API Token", null));
         
-        form.show("Enter credentials for " + jiraUrl, "Save").then(function(formObject) {
-          var user = formObject.values.user;
-          var password = formObject.values.password;
+        form.show(`Enter credentials for ${jiraUrl}`, "Save").then((formObject) => {
+          const user = formObject.values.user;
+          const password = formObject.values.password;
           
           if (user && password) {
             credentials.write(credentialKey, user, password);
@@ -84,7 +82,7 @@
           } else {
             new Alert("Validation Error", "Username and password are required.").show();
           }
-        }).catch(function(err) {
+        }).catch((err) => {
           if (!err.causedByUserCancelling) {
             new Alert("Error", err.message).show();
           }
@@ -93,63 +91,62 @@
       }
       
       // We have credentials, proceed with sync
-      var user = credential.user;
-      var password = credential.password;
+      const user = credential.user;
+      const password = credential.password;
       
-      var fields = "key,summary,description";
+      let fields = "key,summary,description";
       if (syncDueDates) {
         fields += ",duedate";
       }
-      var urlParams = JIRA_API_SEARCH_PATH + "?jql=" + encodeURIComponent(jiraQuery) + "&fields=" + fields;
-      var url = jiraUrl + urlParams;
+      const urlParams = `${JIRA_API_SEARCH_PATH}?jql=${encodeURIComponent(jiraQuery)}&fields=${fields}`;
+      const url = jiraUrl + urlParams;
       
-      console.log("DEBUG: Fetching URL: " + url);
-      console.log("DEBUG: User: " + user);
+      console.log(`DEBUG: Fetching URL: ${url}`);
+      console.log(`DEBUG: User: ${user}`);
       
-      var data = Data.fromString(user + ":" + password);
-      var authCredentials = data.toBase64();
+      const data = Data.fromString(`${user}:${password}`);
+      const authCredentials = data.toBase64();
       
-      var request = URL.FetchRequest.fromString(url);
+      const request = URL.FetchRequest.fromString(url);
       request.method = "GET";
-      request.headers = { Authorization: "Basic " + authCredentials };
+      request.headers = { Authorization: `Basic ${authCredentials}` };
       
       console.log("DEBUG: Request created, about to fetch...");
       
       // Find or create the tag
-      var tag = tags.byName(omnifocusTagToUse) || flattenedTags.byName(omnifocusTagToUse) || new Tag(omnifocusTagToUse);
+      const tag = tags.byName(omnifocusTagToUse) || flattenedTags.byName(omnifocusTagToUse) || new Tag(omnifocusTagToUse);
       
       if (!tag) {
-        throw new Error("Could not create tag: " + omnifocusTagToUse);
+        throw new Error(`Could not create tag: ${omnifocusTagToUse}`);
       }
       
-      var tasks = tag.tasks;
-      var omnifocusTasks = {};
+      const tasks = tag.tasks;
+      const omnifocusTasks = {};
       
-      for (var i = 0; i < tasks.length; i++) {
-        var task = tasks[i];
+      tasks.forEach((task) => {
         try {
-          var match = task.name.match(JIRA_TICKET_REGEX);
+          const match = task.name.match(JIRA_TICKET_REGEX);
           if (match) {
-            var taskId = match[0];
+            const taskId = match[0];
             omnifocusTasks[taskId] = task;
             omnifocusTasks[taskId].jiraToOmnifocusMatched = false;
           }
         } catch(e) {
-          console.error("Error parsing task: " + task.name);
+          console.error(`Error parsing task: ${task.name}`);
         }
-      }
+      });
       
-      var requestPromise = request.fetch();
+      const requestPromise = request.fetch();
       
-      requestPromise.then(function(response) {
-        var createdTasks = 0;
-        var checkedTickets = 0;
+      requestPromise.then((response) => {
+        let createdTasks = 0;
+        let checkedTickets = 0;
         
-        console.log("DEBUG: Response status: " + response.statusCode);
-        console.log("DEBUG: Response MIME type: " + response.mimeType);
+        console.log(`DEBUG: Response status: ${response.statusCode}`);
+        console.log(`DEBUG: Response MIME type: ${response.mimeType}`);
         
         if (response.statusCode >= HTTP_ERROR_THRESHOLD) {
-          var errorMsg = "Jira API error (" + response.statusCode + ")";
+          let errorMsg = `Jira API error (${response.statusCode})`;
           if (response.statusCode === HTTP_UNAUTHORIZED) {
             errorMsg += ": Authentication failed.\n\n";
             errorMsg += "Your API token is invalid or expired.\n";
@@ -161,97 +158,95 @@
               credentials.remove(credentialKey);
               console.log("Cleared invalid credentials from keychain");
             } catch(e) {
-              console.error("Failed to clear credentials: " + e.message);
+              console.error(`Failed to clear credentials: ${e.message}`);
             }
           } else if (response.statusCode === HTTP_FORBIDDEN) {
             errorMsg += ": Access forbidden. Verify permissions.";
           } else if (response.statusCode === HTTP_NOT_FOUND) {
             errorMsg += ": Jira instance not found.";
           } else if (response.statusCode === 410) {
-            errorMsg += ": Endpoint deprecated/gone.\n\nURL: " + url;
+            errorMsg += `: Endpoint deprecated/gone.\n\nURL: ${url}`;
           } else {
-            errorMsg += "\n\nResponse: " + response.bodyString.substring(0, 200);
+            errorMsg += `\n\nResponse: ${response.bodyString.substring(0, 200)}`;
           }
           throw new Error(errorMsg);
         }
         
         if (response.mimeType !== CONTENT_TYPE_JSON) {
-          throw new Error("Unexpected response type: " + response.mimeType + "\n\nThis usually means the server returned an error page.");
+          throw new Error(`Unexpected response type: ${response.mimeType}\n\nThis usually means the server returned an error page.`);
         }
         
-        var jsonResponse;
+        let jsonResponse;
         try {
           jsonResponse = JSON.parse(response.bodyString);
         } catch(parseError) {
-          throw new Error("Failed to parse JSON response.\n\nResponse: " + response.bodyString.substring(0, 200));
+          throw new Error(`Failed to parse JSON response.\n\nResponse: ${response.bodyString.substring(0, 200)}`);
         }
         
-        console.log("DEBUG: Response keys: " + Object.keys(jsonResponse).join(", "));
+        console.log(`DEBUG: Response keys: ${Object.keys(jsonResponse).join(", ")}`);
         
         // The new API might return 'values' instead of 'issues'
-        var issues = jsonResponse.issues || jsonResponse.values;
+        const issues = jsonResponse.issues || jsonResponse.values;
         
         if (!issues) {
-          throw new Error("Invalid Jira response: missing 'issues' or 'values' field. Keys: " + Object.keys(jsonResponse).join(", "));
+          throw new Error(`Invalid Jira response: missing 'issues' or 'values' field. Keys: ${Object.keys(jsonResponse).join(", ")}`);
         }
         
-        console.log("DEBUG: Found " + issues.length + " issues");
-        for (var j = 0; j < issues.length; j++) {
-          var issue = issues[j];
-          
+        console.log(`DEBUG: Found ${issues.length} issues`);
+        issues.forEach((issue, j) => {
           if (!issue) {
-            console.error("ERROR: Issue at index " + j + " is null/undefined");
-            continue;
+            console.error(`ERROR: Issue at index ${j} is null/undefined`);
+            return;
           }
           
           // Log first issue structure for debugging
           if (j === 0) {
-            console.log("DEBUG: First issue keys: " + Object.keys(issue).join(", "));
+            console.log(`DEBUG: First issue keys: ${Object.keys(issue).join(", ")}`);
             if (issue.fields) {
-              console.log("DEBUG: Fields keys: " + Object.keys(issue.fields).join(", "));
+              console.log(`DEBUG: Fields keys: ${Object.keys(issue.fields).join(", ")}`);
             }
           }
           
           checkedTickets++;
           
-          var issueKey = issue.key || issue.id;
+          const issueKey = issue.key || issue.id;
           if (!issueKey) {
             console.error("ERROR: Issue has no key or id");
-            continue;
+            return;
           }
           
           if (omnifocusTasks[issueKey]) {
-            var existingTask = omnifocusTasks[issueKey];
+            const existingTask = omnifocusTasks[issueKey];
             existingTask.markIncomplete();
             existingTask.jiraToOmnifocusMatched = true;
             
             // Update due date if enabled and available
             if (syncDueDates && issue.fields && issue.fields.duedate) {
               try {
-                var dueDate = new Date(issue.fields.duedate);
+                const dueDate = new Date(issue.fields.duedate);
                 existingTask.dueDate = dueDate;
-                console.log("DEBUG: Updated due date for " + issueKey + ": " + dueDate);
+                console.log(`DEBUG: Updated due date for ${issueKey}: ${dueDate}`);
               } catch(e) {
-                console.error("ERROR: Failed to parse due date for " + issueKey + ": " + e.message);
+                console.error(`ERROR: Failed to parse due date for ${issueKey}: ${e.message}`);
               }
             } else if (syncDueDates && issue.fields && !issue.fields.duedate) {
               // Clear due date if Jira issue has no due date
               existingTask.dueDate = null;
-              console.log("DEBUG: Cleared due date for " + issueKey);
+              console.log(`DEBUG: Cleared due date for ${issueKey}`);
             }
             
-            continue;
+            return;
           }
           
           // Create new task - handle different response structure
-          var summary = DEFAULT_NO_TITLE;
-          var description = DEFAULT_NO_DESCRIPTION;
+          let summary = DEFAULT_NO_TITLE;
+          let description = DEFAULT_NO_DESCRIPTION;
           
           if (issue.fields) {
             summary = issue.fields.summary || DEFAULT_NO_TITLE;
             
             // Handle new Jira Cloud description format (Document/ADF)
-            var descField = issue.fields.description;
+            const descField = issue.fields.description;
             if (descField && typeof descField === 'object' && descField.type === 'doc') {
               // Extract plain text from Atlassian Document Format
               description = extractTextFromADF(descField);
@@ -265,34 +260,34 @@
             description = issue.description || DEFAULT_NO_DESCRIPTION;
           }
           
-          var taskName = issueKey + " " + summary;
-          var newTask = new Task(taskName, inbox.beginning);
-          var taskUrl = jiraUrl + JIRA_BROWSE_PATH + issueKey;
+          const taskName = `${issueKey} ${summary}`;
+          const newTask = new Task(taskName, inbox.beginning);
+          const taskUrl = `${jiraUrl}${JIRA_BROWSE_PATH}${issueKey}`;
           createdTasks++;
           
           newTask.addTag(tag);
-          newTask.note = taskUrl + "\n" + description;
+          newTask.note = `${taskUrl}\n${description}`;
           
           // Set due date if enabled and available
           if (syncDueDates && issue.fields && issue.fields.duedate) {
             try {
-              var dueDate = new Date(issue.fields.duedate);
+              const dueDate = new Date(issue.fields.duedate);
               newTask.dueDate = dueDate;
-              console.log("DEBUG: Set due date for " + issueKey + ": " + dueDate);
+              console.log(`DEBUG: Set due date for ${issueKey}: ${dueDate}`);
             } catch(e) {
-              console.error("ERROR: Failed to parse due date for " + issueKey + ": " + e.message);
+              console.error(`ERROR: Failed to parse due date for ${issueKey}: ${e.message}`);
             }
           }
-        }
+        });
         
         // Close unmatched tasks
-        for (var taskKey in omnifocusTasks) {
-          var existingTask = omnifocusTasks[taskKey];
+        Object.keys(omnifocusTasks).forEach((taskKey) => {
+          const existingTask = omnifocusTasks[taskKey];
           if (!existingTask.jiraToOmnifocusMatched) {
-            var canDelete = true;
+            let canDelete = true;
             if (existingTask.hasChildren) {
-              var children = existingTask.children;
-              for (var k = 0; k < children.length; k++) {
+              const children = existingTask.children;
+              for (let k = 0; k < children.length; k++) {
                 if (!children[k].completed) {
                   canDelete = false;
                   break;
@@ -303,24 +298,24 @@
               existingTask.markComplete();
             }
           }
-        }
+        });
         
         new Alert("Jira Sync Complete", 
-          "Synced " + jiraUrl + "\n" +
-          "✓ Checked " + checkedTickets + " tickets\n" +
-          "✓ Created " + createdTasks + " new tasks"
+          `Synced ${jiraUrl}\n` +
+          `✓ Checked ${checkedTickets} tickets\n` +
+          `✓ Created ${createdTasks} new tasks`
         ).show();
         
-        console.log("SUCCESS: Synced " + jiraUrl + ". Checked " + checkedTickets + " tickets, Created " + createdTasks + " new tasks");
+        console.log(`SUCCESS: Synced ${jiraUrl}. Checked ${checkedTickets} tickets, Created ${createdTasks} new tasks`);
         
-      }).catch(function(err) {
+      }).catch((err) => {
         new Alert("Jira Sync Failed", 
-          "Failed to sync " + jiraUrl + "\n\n" +
-          "Error: " + err.message + "\n\n" +
+          `Failed to sync ${jiraUrl}\n\n` +
+          `Error: ${err.message}\n\n` +
           "Check Console.app for details."
         ).show();
         
-        console.error("ERROR: Jira sync failed: " + err.message);
+        console.error(`ERROR: Jira sync failed: ${err.message}`);
       });
       
     } catch(err) {
@@ -329,9 +324,7 @@
     }
   });
   
-  action.validate = function(selection, sender) {
-    return true;
-  };
+  action.validate = (selection, sender) => true;
   
   return action;
 })();
