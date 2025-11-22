@@ -2,6 +2,8 @@
 
 This document provides context for AI coding agents working on the jira-omnifocus-improved project.
 
+**⚠️ Important**: See [TEST-RESULTS.md](../TEST-RESULTS.md) for verified JavaScript capabilities. Earlier versions of this document contained incorrect assumptions about const/let limitations that have been corrected.
+
 ## Project Overview
 
 **Type**: OmniFocus plugin (JavaScript)  
@@ -13,29 +15,39 @@ This document provides context for AI coding agents working on the jira-omnifocu
 
 ### JavaScript Environment
 
-This code runs in OmniFocus's JavaScript for Automation environment, which has important limitations:
+✅ **Good news!** OmniFocus supports modern JavaScript (ES6+). You can use:
+- `const` and `let` (preferred over `var`)
+- Arrow functions
+- Template literals
+- Destructuring, spread operators
+- Array methods (map, filter, find, forEach)
+- Promises
+- All modern JavaScript features
 
-1. **NO `const` or `let` at plugin level** - Use `var` only
-   - `const`/`let` work inside functions but cause "uninitialized variable" errors at top level
-   - This is a quirk of the OmniFocus JavaScript engine
+### The ONE Critical Constraint
 
-2. **Traditional function syntax preferred** - Arrow functions can cause scoping issues
-   ```javascript
-   // Prefer this:
-   function processNode(node) { }
-   
-   // Over this (can cause issues):
-   const processNode = (node) => { }
-   ```
+❌ **Credentials objects MUST be instantiated at plugin load time**
 
-3. **Avoid `forEach` with complex scoping** - Use traditional `for` loops
-   ```javascript
-   // Prefer this:
-   for (var i = 0; i < items.length; i++) { }
-   
-   // Over this (can cause issues):
-   items.forEach(item => { })
-   ```
+```javascript
+(() => {
+  // ✅ CORRECT: Create Credentials at top of IIFE (plugin load time)
+  const credentials = new Credentials();
+  
+  const action = new PlugIn.Action((selection, sender) => {
+    // ✅ Use the credentials instance here
+    const cred = credentials.read("my-key");
+    
+    // ❌ WRONG: Cannot create new Credentials here!
+    // const newCreds = new Credentials(); // Error: "Credential objects may only be constructed when loading a plug-in"
+  });
+  
+  return action;
+})();
+```
+
+**Why?** The OmniFocus Credentials API requires the object to be created during plugin initialization, not during action execution. This is a security/lifecycle constraint, not a JavaScript limitation.
+
+**Note**: Our earlier code used `var` everywhere due to incorrect assumptions during troubleshooting. Modern JavaScript (`const`/`let`/arrows) works perfectly. See TEST-RESULTS.md for proof.
 
 ### API Constraints
 
@@ -50,8 +62,8 @@ This code runs in OmniFocus's JavaScript for Automation environment, which has i
 
 3. **OmniFocus Credentials API** - Secure storage in macOS Keychain
    ```javascript
-   var credentials = new Credentials();  // Must be at top level
-   var credential = credentials.read(credentialKey);
+   const credentials = new Credentials();  // MUST be at plugin load time (top of IIFE)
+   const credential = credentials.read(credentialKey);
    credentials.write(credentialKey, user, password);
    credentials.remove(credentialKey);
    ```
@@ -132,9 +144,28 @@ When `false` (default):
 **Cause**: ADF format not being parsed  
 **Solution**: Check if `description.type === 'doc'` and use `extractTextFromADF()`
 
-### Issue: "Cannot access uninitialized variable"
-**Cause**: Using `const` or `let` at plugin top level  
-**Solution**: Change to `var` declarations
+### Issue: "Credential objects may only be constructed when loading a plug-in"
+**Cause**: Trying to create `new Credentials()` inside the action function  
+**Solution**: Move Credentials instantiation to top of IIFE (plugin load time)
+
+```javascript
+// ✅ CORRECT
+(() => {
+  const credentials = new Credentials();  // At plugin load time
+  const action = new PlugIn.Action((selection, sender) => {
+    const cred = credentials.read("key");
+  });
+  return action;
+})();
+
+// ❌ WRONG
+(() => {
+  const action = new PlugIn.Action((selection, sender) => {
+    const credentials = new Credentials();  // Error!
+  });
+  return action;
+})();
+```
 
 ### Issue: HTTP 401 errors
 **Cause**: Invalid/expired API token  
@@ -190,11 +221,16 @@ DEBUG: Set due date for PROJECT-123: Fri Nov 22 2025...
 
 ## Code Style
 
-- **Variables**: Use `var` at top level, descriptive names
+- **Variables**: Use `const` for immutable values, `let` for mutable, descriptive names
 - **Constants**: Uppercase with underscores (e.g., `HTTP_UNAUTHORIZED`)
+- **Functions**: Arrow functions preferred for callbacks, traditional for standalone functions
+- **Arrays**: Use modern methods (map, filter, find, forEach) over traditional for loops
+- **Strings**: Template literals preferred over concatenation
 - **Error handling**: Try-catch with specific error messages
 - **Logging**: Use `console.log()` for DEBUG, `console.error()` for ERROR
 - **Alerts**: User-friendly messages with actionable guidance
+
+**Note**: The existing code uses `var` throughout due to earlier incorrect assumptions. Modern JavaScript works fine. Use `const`/`let` for new code.
 
 ## File Structure
 
