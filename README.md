@@ -72,20 +72,31 @@ For easier management, you can use a linked folder:
 
 ## Configuration
 
-Edit the `configs` array in `jira.omnifocusjs`:
+Edit the configuration variables in `jira.omnifocusjs` (around line 45):
 
 ```javascript
-const configs = [{
-    jiraUrl: "https://yourcompany.atlassian.net",  // Your Jira instance URL
-    credentialKey: "jira-default",                  // Unique key for Keychain storage
-    omnifocusTagToUse: "Jira",                      // Tag for synced tasks (supports "Parent : Child")
-    jiraQuery: "assignee=currentuser() and resolution is empty",  // JQL query
-    processComments: false,                          // Enable comment syncing as subtasks
-    omnifocusCommentTagToUse: "Jira-Comment",       // Tag for comment subtasks
-}]
+var jiraUrl = "https://yourcompany.atlassian.net";  // Your Jira instance URL
+var credentialKey = "jira-default";                  // Unique key for Keychain storage
+var omnifocusTagToUse = "Jira";                      // Tag for synced tasks (supports "Parent : Child")
+var jiraQuery = "assignee=currentuser() and resolution is empty";  // JQL query
+var processComments = false;                          // Enable comment syncing as subtasks
+var omnifocusCommentTagToUse = "Jira-Comment";       // Tag for comment subtasks
+var syncDueDates = false;                             // Sync Jira due dates to OmniFocus (default: false)
 ```
 
-For multiple Jira instances, add additional config objects to the array.
+### Due Date Syncing
+
+Set `syncDueDates = true` to automatically sync due dates from Jira to OmniFocus:
+
+- **New tasks**: Due dates are set when creating tasks from Jira issues
+- **Existing tasks**: Due dates are updated on each sync if changed in Jira
+- **Cleared dates**: If a Jira issue's due date is removed, it will be cleared in OmniFocus
+- **Default**: Disabled (`false`) to maintain backward compatibility
+
+**Example:**
+```javascript
+var syncDueDates = true;  // Enable due date syncing
+```
 
 ## How It Works
 
@@ -96,12 +107,13 @@ The plugin identifies tasks by the Jira ticket number (e.g., `PROJECT-123`), whi
 - **Automatic Sync**: Queries all open tickets assigned to you from Jira
 - **Task Management**: Creates new tasks or reopens completed tasks when they appear in Jira
 - **Auto-Complete**: Closes tasks that no longer appear in your Jira query
-- **Multi-Instance Support**: Sync from multiple Jira instances simultaneously
+- **Due Date Syncing**: Optional syncing of Jira due dates to OmniFocus tasks
 - **Comment Sync**: Optional syncing of Jira comments as subtasks
 - **Custom JQL Queries**: Filter tickets using any JQL query
 - **Hierarchical Tags**: Supports nested tags (e.g., "Work : Projects : Jira")
 - **Smart Ticket Detection**: Validates proper Jira ticket format (PROJECT-123)
 - **Secure**: Credentials stored in macOS Keychain, never in plain text
+- **Jira Cloud API v3**: Uses latest Jira Cloud REST API with Atlassian Document Format support
 
 ## Usage
 
@@ -227,6 +239,18 @@ jiraUrl: "https://yourcompany.atlassian.net/", // ✗ Trailing slash
 - **Rate Limiting**: Batch requests help, but very large syncs may hit Jira API limits 
 
 ## Changelog
+
+### Version 2.3 (2025-11-22)
+- **Due Date Syncing**: Added optional syncing of Jira due dates to OmniFocus (disabled by default)
+- **Bidirectional Updates**: Due dates sync for both new and existing tasks
+- **Smart Date Handling**: Clears OmniFocus due dates when removed from Jira issues
+
+### Version 2.2 (2025-11-21)
+- **Jira Cloud API v3**: Migrated from deprecated v2 to current v3 endpoint
+- **ADF Support**: Added parser for Atlassian Document Format descriptions
+- **Field Selection**: Fixed issue where tasks showed only IDs by adding explicit field requests
+- **Improved Auth**: Auto-clears invalid credentials on 401 errors with helpful prompts
+- **Better Logging**: Enhanced debug output for troubleshooting
 
 ### Version 2.0 (Improved Fork - 2025)
 - **Security**: Moved credentials to macOS Keychain storage
