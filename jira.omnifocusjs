@@ -3,455 +3,302 @@
   "targets": ["omnifocus"],
   "author": "Chad Harp (improved fork of Bastian Kuhn's original)",
   "identifier": "com.harpchad.omnifocus.sync.jira-improved",
-  "version": "2.0",
+  "version": "2.2",
   "description": "Improved Jira-OmniFocus sync with secure credentials, error handling, and performance enhancements",
   "label": "🔹 Jira: Sync",
   "shortLabel": "Jira: sync"
 }*/
 (() => {
-  // Create Credentials instance (must be done during plugin loading)
   var credentials = new Credentials();
   
-  // ============================================================================
-  // CONSTANTS
-  // ============================================================================
-  
-  // Jira API endpoints
-  const JIRA_API_SEARCH_PATH = "/rest/api/2/search";
-  const JIRA_API_COMMENT_PATH = "/rest/api/2/issue";
-  const JIRA_BROWSE_PATH = "/browse/";
-  
-  // HTTP Status codes
-  const HTTP_OK = 200;
-  const HTTP_UNAUTHORIZED = 401;
-  const HTTP_FORBIDDEN = 403;
-  const HTTP_NOT_FOUND = 404;
-  const HTTP_ERROR_THRESHOLD = 400;
-  
-  // Default values
-  const DEFAULT_NO_DESCRIPTION = "No description";
-  const DEFAULT_NO_TITLE = "No title";
-  
-  // Content types
-  const CONTENT_TYPE_JSON = "application/json";
-  
-  // ============================================================================
-  
-  var action = new PlugIn.Action(function (selection, sender) {
-    // START EDIT
-    // Configuration for each Jira instance
-    // Credentials are now stored securely in macOS Keychain
-    // On first run, you'll be prompted to enter credentials for each jiraUrl
-    const configs = [{
-        jiraUrl: "", // e.g., "https://yourcompany.atlassian.net"
-        credentialKey: "jira-default", // Unique key for this Jira instance's credentials in Keychain
-        omnifocusTagToUse: "Jira", // you can also use the format "Parent1 : Parent2 : Child"
-        jiraQuery: "assignee=currentuser() and resolution is empty",
-        processComments: false, // if true, a subtask is added for each ticket comment
-        omnifocusCommentTagToUse: "Jira-Comment",
-    }]
-    // Example for multiple Jira instances:
-    // {
-    //     jiraUrl: "https://secondcompany.atlassian.net",
-    //     credentialKey: "jira-secondary",
-    //     omnifocusTagToUse: "Jira-Secondary",
-    //     jiraQuery: "assignee=currentuser() and resolution is empty",
-    //     processComments: false,
-    //     omnifocusCommentTagToUse: "Jira-Comment-Secondary",
-    // }
-    // END EDIT
-
-    // Validate configurations before processing
-    if (!configs || configs.length === 0) {
-      const alert = new Alert("Configuration Error", "No Jira configurations defined. Please edit the plugin and add at least one config.");
-      alert.show();
-      console.error("ERROR: No configurations defined in configs array");
-      return;
+  // Helper function to extract plain text from Atlassian Document Format (ADF)
+  function extractTextFromADF(doc) {
+    if (!doc || !doc.content) {
+      return "No description";
     }
-
-    configs.forEach((config, index) => {
-        // Validate required configuration fields
-        var errors = [];
-        
-        if (!config.jiraUrl || config.jiraUrl.trim() === "") {
-          errors.push("jiraUrl is required");
-        } else {
-          // Validate URL format using regex (URL constructor not available in OmniFocus)
-          const urlPattern = /^https?:\/\/.+/i;
-          if (!urlPattern.test(config.jiraUrl.trim())) {
-            errors.push("jiraUrl must start with http:// or https://");
-          }
-          // Check for trailing slash
-          if (config.jiraUrl.trim().endsWith('/')) {
-            errors.push("jiraUrl should not end with a trailing slash");
-          }
+    
+    var textParts = [];
+    
+    function processNode(node) {
+      if (node.type === 'text') {
+        textParts.push(node.text);
+      } else if (node.content) {
+        for (var i = 0; i < node.content.length; i++) {
+          processNode(node.content[i]);
         }
+      }
+    }
+    
+    for (var i = 0; i < doc.content.length; i++) {
+      processNode(doc.content[i]);
+      // Add paragraph breaks
+      if (i < doc.content.length - 1 && doc.content[i].type === 'paragraph') {
+        textParts.push('\n');
+      }
+    }
+    
+    return textParts.join('') || "No description";
+  }
+  
+  var action = new PlugIn.Action(function(selection, sender) {
+    // Configuration
+    var jiraUrl = "https://ncmassociates.atlassian.net";
+    var credentialKey = "jira-ncm";
+    var omnifocusTagToUse = "jira";
+    var jiraQuery = "assignee=currentuser() and resolution is empty";
+    var processComments = false;
+    var omnifocusCommentTagToUse = "Jira-Comment";
+    
+    // Constants
+    var JIRA_API_SEARCH_PATH = "/rest/api/3/search/jql";
+    var JIRA_API_COMMENT_PATH = "/rest/api/3/issue";
+    var JIRA_BROWSE_PATH = "/browse/";
+    var HTTP_ERROR_THRESHOLD = 400;
+    var HTTP_UNAUTHORIZED = 401;
+    var HTTP_FORBIDDEN = 403;
+    var HTTP_NOT_FOUND = 404;
+    var CONTENT_TYPE_JSON = "application/json";
+    var DEFAULT_NO_DESCRIPTION = "No description";
+    var DEFAULT_NO_TITLE = "No title";
+    var JIRA_TICKET_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6}/;
+    var JIRA_COMMENT_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6} [0-9]+/;
+    
+    try {
+      // Retrieve credentials
+      var credential = credentials.read(credentialKey);
+      
+      if (!credential) {
+        // Prompt for credentials
+        var form = new Form();
+        form.addField(new Form.Field.String("user", "Jira Username/Email", null));
+        form.addField(new Form.Field.Password("password", "Jira API Token", null));
         
-        if (!config.credentialKey || config.credentialKey.trim() === "") {
-          errors.push("credentialKey is required");
-        }
-        
-        if (!config.omnifocusTagToUse || config.omnifocusTagToUse.trim() === "") {
-          errors.push("omnifocusTagToUse is required");
-        }
-        
-        if (!config.jiraQuery || config.jiraQuery.trim() === "") {
-          errors.push("jiraQuery is required");
-        }
-        
-        if (config.processComments && (!config.omnifocusCommentTagToUse || config.omnifocusCommentTagToUse.trim() === "")) {
-          errors.push("omnifocusCommentTagToUse is required when processComments is true");
-        }
-        
-        // Report validation errors
-        if (errors.length > 0) {
-          const errorMsg = `Configuration #${index + 1} is invalid:\n- ${errors.join('\n- ')}`;
-          const alert = new Alert("Configuration Error", errorMsg);
-          alert.show();
-          console.error(`ERROR: ${errorMsg}`);
-          return; // Skip this invalid config
-        }
-        
-        var jiraUrl = config.jiraUrl.trim();
-        var credentialKey = config.credentialKey.trim();
-        var omnifocusTagToUse = config.omnifocusTagToUse.trim();
-        var jiraQuery = config.jiraQuery.trim();
-        var processComments = config.processComments;
-        var omnifocusCommentTagToUse = config.omnifocusCommentTagToUse?.trim() || "";
-
-        // Retrieve credentials from Keychain
-        // If not found, prompt user to enter them
-        var credential = credentials.read(credentialKey);
-        if (!credential) {
-          // Prompt for credentials on first run
-          const form = new Form();
-          form.addField(new Form.Field.String("user", "Jira Username/Email", null));
-          form.addField(new Form.Field.Password("password", "Jira API Token", null));
-          const formPromise = form.show(`Enter credentials for ${jiraUrl}`, "Save");
+        form.show("Enter credentials for " + jiraUrl, "Save").then(function(formObject) {
+          var user = formObject.values.user;
+          var password = formObject.values.password;
           
-          formPromise.then((formObject) => {
-            var user = formObject.values.user;
-            var password = formObject.values.password;
-            
-            // Validate credentials before saving
-            if (!user || user.trim() === "") {
-              const alert = new Alert("Validation Error", "Username/email cannot be empty");
-              alert.show();
-              console.error("ERROR: Empty username provided");
-              return;
-            }
-            
-            if (!password || password.trim() === "") {
-              const alert = new Alert("Validation Error", "API token/password cannot be empty");
-              alert.show();
-              console.error("ERROR: Empty password provided");
-              return;
-            }
-            
-            // Save to Keychain
+          if (user && password) {
             credentials.write(credentialKey, user, password);
-            
-            const alert = new Alert("Credentials Saved", 
-              `Credentials saved to Keychain for ${credentialKey}.\n\nPlease run sync again.`
-            );
-            alert.show();
-            console.log(`INFO: Credentials saved to Keychain for ${credentialKey}. Please run sync again.`);
-          }).catch((err) => {
-            console.error(`ERROR: Failed to save credentials for ${credentialKey}: ${err}`);
-          });
-          return; // Exit this config iteration, credentials will be available on next run
-        }
-
-        var user = credential.user;
-        var password = credential.password;
-
-        const urlParams = `${JIRA_API_SEARCH_PATH}?jql=${encodeURIComponent(jiraQuery)}`;
-        const url = jiraUrl + urlParams;
-
-        const data = Data.fromString(user + ":" + password);
-        const credentials = data.toBase64();
-        
-        // Improved regex for Jira ticket IDs
-        // Format: PROJECT-123 where PROJECT is 1-10 uppercase letters (can include numbers)
-        // and 123 is 1-6 digits
-        const JIRA_TICKET_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6}/;
-        
-        // Regex for comment IDs (ticket ID followed by space and comment number)
-        const JIRA_COMMENT_REGEX = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,6} [0-9]+/;
-
-        const request = URL.FetchRequest.fromString(url);
-        request.method = "GET";
-        request.headers = { Authorization: `Basic ${credentials}` };
-        const requestPromise = request.fetch();
-
-
-        // Find the tag
-        let tag = null;
-
-        // If user gave an absolute path, parse it and process it
-        const parsedOmnifocusTagToUse = omnifocusTagToUse.split(" : ");
-        if (parsedOmnifocusTagToUse.length > 1) {
-          let currentTag = null;
-          let i;
-          for (i = 0; i < parsedOmnifocusTagToUse.length; i++) {
-            let newTag;
-            if (currentTag) {
-              newTag = currentTag.childNamed(parsedOmnifocusTagToUse[i]);
-            } else {
-              newTag = tags.byName(parsedOmnifocusTagToUse[i]);
-            }
-            if (!newTag) break;
-            currentTag = newTag;
+            new Alert("Credentials Saved", "Credentials saved to Keychain.\n\nPlease run sync again.").show();
+          } else {
+            new Alert("Validation Error", "Username and password are required.").show();
           }
-
-          // after all ran, check if its a success, then apply tag
-          if (
-            currentTag &&
-            i === parsedOmnifocusTagToUse.length &&
-            currentTag.name ===
-              parsedOmnifocusTagToUse[parsedOmnifocusTagToUse.length - 1]
-          ) {
-            tag = currentTag;
+        }).catch(function(err) {
+          if (!err.causedByUserCancelling) {
+            new Alert("Error", err.message).show();
           }
-        }
-        if (!tag) {
-          // if tag is not found yet
-          tag =
-            tags.byName(omnifocusTagToUse) ||
-            flattenedTags.byName(omnifocusTagToUse) ||
-            new Tag(omnifocusTagToUse);
-        }
-        if (!tag) {
-          console.error(new Error("could not create tag"));
-          return;
-        }
-        const tasks = tag.tasks;
-
-        const omnifocusComments = {};
-        if (processComments) {
-          // Get all comment tagged tasks
-          const commentTag =
-            tags.byName(omnifocusCommentTagToUse) ||
-            flattenedTags.byName(omnifocusCommentTagToUse) ||
-            new Tag(omnifocusCommentTagToUse);
-
-            const commentTasks = commentTag.tasks;
-            commentTasks.forEach((comment) => {
-              let commentId;
-              try {
-                const match = comment.name.match(JIRA_COMMENT_REGEX);
-                if (!match) {
-                  console.log(`DEBUG: Comment task does not match Jira format: ${comment.name}`);
-                  return;
-                }
-                commentId = match[0];
-              } catch (error) {
-                console.error(`ERROR: Failed to parse comment name: ${comment.name} - ${error.message}`);
-                return;
-              }
-              omnifocusComments[commentId] = comment;
-            });
-        }
-
-        // cache object instead of array so search will be faster later
-        let omnifocusTasks = {};
-        tasks.forEach((task) => {
-          let taskId;
-          try {
-            const match = task.name.match(JIRA_TICKET_REGEX);
-            if (!match) {
-              console.log(`DEBUG: Task does not match Jira ticket format, skipping: ${task.name}`);
-              return;
-            }
-            taskId = match[0];
-          } catch (error) {
-            console.error(`ERROR: Failed to parse task name: ${task.name} - ${error.message}`);
-            return;
-          }
-          omnifocusTasks[taskId] = task;
-          // Reset Jira Match Flag
-          omnifocusTasks[taskId].jiraToOmnifocusMatched = false;
         });
-
-        requestPromise.then((response) => {
-          let createdTasks = 0;
-          let checkedTickets = 0;
-          let createdComments = 0;
-          
-          // Validate response
-          if (!response) {
-            throw new Error("No response received from Jira API");
+        return;
+      }
+      
+      // We have credentials, proceed with sync
+      var user = credential.user;
+      var password = credential.password;
+      
+      var urlParams = JIRA_API_SEARCH_PATH + "?jql=" + encodeURIComponent(jiraQuery) + "&fields=key,summary,description";
+      var url = jiraUrl + urlParams;
+      
+      console.log("DEBUG: Fetching URL: " + url);
+      console.log("DEBUG: User: " + user);
+      
+      var data = Data.fromString(user + ":" + password);
+      var authCredentials = data.toBase64();
+      
+      var request = URL.FetchRequest.fromString(url);
+      request.method = "GET";
+      request.headers = { Authorization: "Basic " + authCredentials };
+      
+      console.log("DEBUG: Request created, about to fetch...");
+      
+      // Find or create the tag
+      var tag = tags.byName(omnifocusTagToUse) || flattenedTags.byName(omnifocusTagToUse) || new Tag(omnifocusTagToUse);
+      
+      if (!tag) {
+        throw new Error("Could not create tag: " + omnifocusTagToUse);
+      }
+      
+      var tasks = tag.tasks;
+      var omnifocusTasks = {};
+      
+      for (var i = 0; i < tasks.length; i++) {
+        var task = tasks[i];
+        try {
+          var match = task.name.match(JIRA_TICKET_REGEX);
+          if (match) {
+            var taskId = match[0];
+            omnifocusTasks[taskId] = task;
+            omnifocusTasks[taskId].jiraToOmnifocusMatched = false;
           }
-          
-          if (response.statusCode >= HTTP_ERROR_THRESHOLD) {
-            let errorMsg = `Jira API error (${response.statusCode})`;
-            if (response.statusCode === HTTP_UNAUTHORIZED) {
-              errorMsg += ": Authentication failed. Check credentials in Keychain.";
-            } else if (response.statusCode === HTTP_FORBIDDEN) {
-              errorMsg += ": Access forbidden. Verify API token permissions.";
-            } else if (response.statusCode === HTTP_NOT_FOUND) {
-              errorMsg += ": Jira instance not found. Check jiraUrl in config.";
+        } catch(e) {
+          console.error("Error parsing task: " + task.name);
+        }
+      }
+      
+      var requestPromise = request.fetch();
+      
+      requestPromise.then(function(response) {
+        var createdTasks = 0;
+        var checkedTickets = 0;
+        
+        console.log("DEBUG: Response status: " + response.statusCode);
+        console.log("DEBUG: Response MIME type: " + response.mimeType);
+        
+        if (response.statusCode >= HTTP_ERROR_THRESHOLD) {
+          var errorMsg = "Jira API error (" + response.statusCode + ")";
+          if (response.statusCode === HTTP_UNAUTHORIZED) {
+            errorMsg += ": Authentication failed.\n\n";
+            errorMsg += "Your API token is invalid or expired.\n";
+            errorMsg += "Clearing stored credentials...\n\n";
+            errorMsg += "Please run sync again to enter new credentials.";
+            
+            // Clear the bad credentials
+            try {
+              credentials.remove(credentialKey);
+              console.log("Cleared invalid credentials from keychain");
+            } catch(e) {
+              console.error("Failed to clear credentials: " + e.message);
             }
-            throw new Error(errorMsg);
+          } else if (response.statusCode === HTTP_FORBIDDEN) {
+            errorMsg += ": Access forbidden. Verify permissions.";
+          } else if (response.statusCode === HTTP_NOT_FOUND) {
+            errorMsg += ": Jira instance not found.";
+          } else if (response.statusCode === 410) {
+            errorMsg += ": Endpoint deprecated/gone.\n\nURL: " + url;
+          } else {
+            errorMsg += "\n\nResponse: " + response.bodyString.substring(0, 200);
+          }
+          throw new Error(errorMsg);
+        }
+        
+        if (response.mimeType !== CONTENT_TYPE_JSON) {
+          throw new Error("Unexpected response type: " + response.mimeType + "\n\nThis usually means the server returned an error page.");
+        }
+        
+        var jsonResponse;
+        try {
+          jsonResponse = JSON.parse(response.bodyString);
+        } catch(parseError) {
+          throw new Error("Failed to parse JSON response.\n\nResponse: " + response.bodyString.substring(0, 200));
+        }
+        
+        console.log("DEBUG: Response keys: " + Object.keys(jsonResponse).join(", "));
+        
+        // The new API might return 'values' instead of 'issues'
+        var issues = jsonResponse.issues || jsonResponse.values;
+        
+        if (!issues) {
+          throw new Error("Invalid Jira response: missing 'issues' or 'values' field. Keys: " + Object.keys(jsonResponse).join(", "));
+        }
+        
+        console.log("DEBUG: Found " + issues.length + " issues");
+        for (var j = 0; j < issues.length; j++) {
+          var issue = issues[j];
+          
+          if (!issue) {
+            console.error("ERROR: Issue at index " + j + " is null/undefined");
+            continue;
           }
           
-          if (response.mimeType !== CONTENT_TYPE_JSON) {
-            throw new Error(`Unexpected response type: ${response.mimeType}. Expected ${CONTENT_TYPE_JSON}`);
+          // Log first issue structure for debugging
+          if (j === 0) {
+            console.log("DEBUG: First issue keys: " + Object.keys(issue).join(", "));
+            if (issue.fields) {
+              console.log("DEBUG: Fields keys: " + Object.keys(issue.fields).join(", "));
+            }
           }
           
-          let jsonResponse;
-          try {
-            jsonResponse = JSON.parse(response.bodyString);
-          } catch (parseError) {
-            throw new Error(`Failed to parse Jira response: ${parseError.message}`);
+          checkedTickets++;
+          
+          var issueKey = issue.key || issue.id;
+          if (!issueKey) {
+            console.error("ERROR: Issue has no key or id");
+            continue;
           }
           
-          if (!jsonResponse.issues) {
-            throw new Error("Invalid Jira response: missing 'issues' field");
+          if (omnifocusTasks[issueKey]) {
+            omnifocusTasks[issueKey].markIncomplete();
+            omnifocusTasks[issueKey].jiraToOmnifocusMatched = true;
+            continue;
           }
           
-          // ADD THE TASKS
-
-            for (const issue of jsonResponse.issues) {
-              try {
-                // Validate issue data
-                if (!issue.key || !issue.fields) {
-                  console.error(`WARNING: Skipping invalid issue: ${JSON.stringify(issue)}`);
-                  continue;
+          // Create new task - handle different response structure
+          var summary = DEFAULT_NO_TITLE;
+          var description = DEFAULT_NO_DESCRIPTION;
+          
+          if (issue.fields) {
+            summary = issue.fields.summary || DEFAULT_NO_TITLE;
+            
+            // Handle new Jira Cloud description format (Document/ADF)
+            var descField = issue.fields.description;
+            if (descField && typeof descField === 'object' && descField.type === 'doc') {
+              // Extract plain text from Atlassian Document Format
+              description = extractTextFromADF(descField);
+            } else if (typeof descField === 'string') {
+              description = descField;
+            } else if (descField) {
+              description = DEFAULT_NO_DESCRIPTION;
+            }
+          } else if (issue.summary) {
+            summary = issue.summary;
+            description = issue.description || DEFAULT_NO_DESCRIPTION;
+          }
+          
+          var taskName = issueKey + " " + summary;
+          var newTask = new Task(taskName, inbox.beginning);
+          var taskUrl = jiraUrl + JIRA_BROWSE_PATH + issueKey;
+          createdTasks++;
+          
+          newTask.addTag(tag);
+          newTask.note = taskUrl + "\n" + description;
+        }
+        
+        // Close unmatched tasks
+        for (var taskKey in omnifocusTasks) {
+          var existingTask = omnifocusTasks[taskKey];
+          if (!existingTask.jiraToOmnifocusMatched) {
+            var canDelete = true;
+            if (existingTask.hasChildren) {
+              var children = existingTask.children;
+              for (var k = 0; k < children.length; k++) {
+                if (!children[k].completed) {
+                  canDelete = false;
+                  break;
                 }
-                
-                // Search if we need to add a new Task
-                checkedTickets++;
-                if (omnifocusTasks[issue.key]) {
-                  // Make sure the task opens again
-                  omnifocusTasks[issue.key].markIncomplete();
-                  omnifocusTasks[issue.key].jiraToOmnifocusMatched = true;
-                  continue;
-                }
-
-                // There was no Matching Task, so we create the Task
-                const taskName = `${issue.key} ${issue.fields.summary || DEFAULT_NO_TITLE}`;
-                const newTask = new Task(taskName, inbox.beginning);
-                const taskUrl = `${jiraUrl}${JIRA_BROWSE_PATH}${issue.key}`;
-                createdTasks++;
-
-                newTask.addTag(tag);
-                newTask.note = `${taskUrl}\n${issue.fields.description || DEFAULT_NO_DESCRIPTION}`;
-              } catch (issueError) {
-                console.error(`ERROR: Failed to process issue ${issue?.key || 'unknown'}: ${issueError.message}`);
               }
             }
-
-
-            //Close Tasks or Update comments if enabled
-            // Collect all comment fetch promises for batch processing
-            const commentPromises = [];
-            
-            for (const [task_id, task] of Object.entries(omnifocusTasks)) {
-              if (!task.jiraToOmnifocusMatched) {
-                  let can_delete = true;
-
-                  if(task.hasChildren){
-                      task.children.forEach(subtask => {
-                          if (!subtask.completed){
-                            can_delete = false;
-                          }
-                      });
-                  }
-                  if(can_delete) {
-                    task.markComplete();
-                  }
-                }
-                
-                // Batch comment fetching - collect promises instead of executing sequentially
-                if (processComments) {
-                    const commentUrlParams = `${JIRA_API_COMMENT_PATH}/${task_id}/comment`;
-                    const commentUrl = jiraUrl + commentUrlParams;
-                    const commentRequest = URL.FetchRequest.fromString(commentUrl);
-                    commentRequest.method = "GET";
-                    commentRequest.headers = { Authorization: `Basic ${credentials}` };
-                    
-                    const commentPromise = commentRequest.fetch()
-                      .then((commentResponse) => {
-                        try {
-                          if (commentResponse.statusCode >= HTTP_ERROR_THRESHOLD) {
-                            console.error(`WARNING: Failed to fetch comments for ${task_id} (${commentResponse.statusCode})`);
-                            return 0;
-                          }
-                          
-                          const jsonComments = JSON.parse(commentResponse.bodyString);
-                          if (!jsonComments.comments) {
-                            console.error(`WARNING: Invalid comment response for ${task_id}`);
-                            return 0;
-                          }
-                          
-                          let newCommentsCount = 0;
-                          for (const comment of jsonComments.comments) {
-                              const comment_id = task_id + " " + comment.id;
-                              if (!omnifocusComments[comment_id] ) {
-                                  const taskName = comment_id + " Comment:\n" + comment.body;
-                                  const newTask = new Task(taskName, task);
-                                  newTask.addTag(commentTag);
-                                  newCommentsCount++;
-                              }
-                          }
-                          return newCommentsCount;
-                        } catch (commentError) {
-                          console.error(`ERROR: Failed to process comments for ${task_id}: ${commentError.message}`);
-                          return 0;
-                        }
-                      })
-                      .catch((commentErr) => {
-                        console.error(`ERROR: Comment fetch failed for ${task_id}: ${commentErr.message}`);
-                        return 0;
-                      });
-                    
-                    commentPromises.push(commentPromise);
-                }
+            if (canDelete) {
+              existingTask.markComplete();
             }
-            
-            // Wait for all comment fetches to complete in parallel
-            if (commentPromises.length > 0) {
-              Promise.all(commentPromises).then((commentCounts) => {
-                createdComments = commentCounts.reduce((sum, count) => sum + count, 0);
-                console.log(`INFO: Completed batch comment fetch for ${commentPromises.length} tickets, created ${createdComments} comment subtasks`);
-              });
-            }
-          
-          // Show success notification
-          const alert = new Alert("Jira Sync Complete", 
-            `Synced ${jiraUrl}\n` +
-            `✓ Checked ${checkedTickets} tickets\n` +
-            `✓ Created ${createdTasks} new tasks\n` +
-            `✓ Added ${createdComments} comment subtasks`
-          );
-          alert.show();
-          
-          console.log(`SUCCESS: Synced ${jiraUrl}. Checked ${checkedTickets} Tickets, Created ${createdTasks} new tasks, Added ${createdComments} Subtickets for Comments`);
-        });
-
-        requestPromise.catch((err) => {
-          // Show error notification to user
-          const errorAlert = new Alert("Jira Sync Failed", 
-            `Failed to sync ${jiraUrl}\n\n` +
-            `Error: ${err.message}\n\n` +
-            `Check Console.app for details.`
-          );
-          errorAlert.show();
-          
-          console.error(`ERROR: Jira sync failed for ${jiraUrl}: ${err.message}`);
-          console.error(`Stack: ${err.stack || 'No stack trace available'}`);
-        });
-    });
-
+          }
+        }
+        
+        new Alert("Jira Sync Complete", 
+          "Synced " + jiraUrl + "\n" +
+          "✓ Checked " + checkedTickets + " tickets\n" +
+          "✓ Created " + createdTasks + " new tasks"
+        ).show();
+        
+        console.log("SUCCESS: Synced " + jiraUrl + ". Checked " + checkedTickets + " tickets, Created " + createdTasks + " new tasks");
+        
+      }).catch(function(err) {
+        new Alert("Jira Sync Failed", 
+          "Failed to sync " + jiraUrl + "\n\n" +
+          "Error: " + err.message + "\n\n" +
+          "Check Console.app for details."
+        ).show();
+        
+        console.error("ERROR: Jira sync failed: " + err.message);
+      });
+      
+    } catch(err) {
+      new Alert("Error", err.toString()).show();
+      console.error(err);
+    }
   });
-
-  action.validate = function (selection, sender) {
-    //
-    // This action is always valid.
-    //
+  
+  action.validate = function(selection, sender) {
     return true;
   };
-
+  
   return action;
 })();
