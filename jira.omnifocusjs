@@ -3,7 +3,7 @@
   "targets": ["omnifocus"],
   "author": "Chad Harp (improved fork of Bastian Kuhn's original)",
   "identifier": "com.harpchad.omnifocus.sync.jira-improved",
-  "version": "2.2",
+  "version": "2.3",
   "description": "Improved Jira-OmniFocus sync with secure credentials, error handling, and performance enhancements",
   "label": "🔹 Jira: Sync",
   "shortLabel": "Jira: sync"
@@ -48,6 +48,7 @@
     var jiraQuery = "assignee=currentuser() and resolution is empty";
     var processComments = false;
     var omnifocusCommentTagToUse = "Jira-Comment";
+    var syncDueDates = false; // Set to true to sync Jira due dates to OmniFocus
     
     // Constants
     var JIRA_API_SEARCH_PATH = "/rest/api/3/search/jql";
@@ -95,7 +96,11 @@
       var user = credential.user;
       var password = credential.password;
       
-      var urlParams = JIRA_API_SEARCH_PATH + "?jql=" + encodeURIComponent(jiraQuery) + "&fields=key,summary,description";
+      var fields = "key,summary,description";
+      if (syncDueDates) {
+        fields += ",duedate";
+      }
+      var urlParams = JIRA_API_SEARCH_PATH + "?jql=" + encodeURIComponent(jiraQuery) + "&fields=" + fields;
       var url = jiraUrl + urlParams;
       
       console.log("DEBUG: Fetching URL: " + url);
@@ -216,8 +221,25 @@
           }
           
           if (omnifocusTasks[issueKey]) {
-            omnifocusTasks[issueKey].markIncomplete();
-            omnifocusTasks[issueKey].jiraToOmnifocusMatched = true;
+            var existingTask = omnifocusTasks[issueKey];
+            existingTask.markIncomplete();
+            existingTask.jiraToOmnifocusMatched = true;
+            
+            // Update due date if enabled and available
+            if (syncDueDates && issue.fields && issue.fields.duedate) {
+              try {
+                var dueDate = new Date(issue.fields.duedate);
+                existingTask.dueDate = dueDate;
+                console.log("DEBUG: Updated due date for " + issueKey + ": " + dueDate);
+              } catch(e) {
+                console.error("ERROR: Failed to parse due date for " + issueKey + ": " + e.message);
+              }
+            } else if (syncDueDates && issue.fields && !issue.fields.duedate) {
+              // Clear due date if Jira issue has no due date
+              existingTask.dueDate = null;
+              console.log("DEBUG: Cleared due date for " + issueKey);
+            }
+            
             continue;
           }
           
@@ -250,6 +272,17 @@
           
           newTask.addTag(tag);
           newTask.note = taskUrl + "\n" + description;
+          
+          // Set due date if enabled and available
+          if (syncDueDates && issue.fields && issue.fields.duedate) {
+            try {
+              var dueDate = new Date(issue.fields.duedate);
+              newTask.dueDate = dueDate;
+              console.log("DEBUG: Set due date for " + issueKey + ": " + dueDate);
+            } catch(e) {
+              console.error("ERROR: Failed to parse due date for " + issueKey + ": " + e.message);
+            }
+          }
         }
         
         // Close unmatched tasks
